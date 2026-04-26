@@ -1,21 +1,28 @@
-from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
-from app import app
-import time
-
-db = SQLAlchemy()
+from datetime import datetime, timezone
+from app import db
 
 class Task(db.Model):
     __tablename__ = "tasks"
 
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(100), nullable=False)
-    description = db.Column(db.String(500))
-    completed = db.Column(db.Boolean, default=False)
-    due_date = db.Column(db.DateTime, default=datetime.isoformat)
-    category_id = db.Column(db.Integer, db.ForeignKey("categories.id"))
-    created_at = db.Column(db.DateTime)
-    updated_at = db.Column(db.DateTime)
+    description = db.Column(db.String(500), nullable=True)
+    completed = db.Column(db.Boolean, nullable=False, default=False)
+    due_date = db.Column(db.DateTime, nullable=True)
+    category_id = db.Column(db.Integer, db.ForeignKey("categories.id"), nullable=True)
+    created_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.fromisoformat(datetime.now(timezone.utc).isoformat()),
+    )
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=lambda: datetime.fromisoformat(datetime.now(timezone.utc).isoformat()),
+        onupdate=lambda: datetime.fromisoformat(datetime.now(timezone.utc).isoformat()),
+    )
+
+    category = db.relationship("Category", back_populates="tasks")
     
     def to_dict(self):
         return {
@@ -28,17 +35,6 @@ class Task(db.Model):
             "created_at": self.created_at,
             "updated_at": self.updated_at
         }
-    
-def deliver_notification(task_id):
-    time.sleep(5)
-    with app.app_context():
-        task = Task.query.get(task_id)
-
-        if not Task:
-            print(f"[Worker] Notification {notification_id} not found!")
-            return
-        
-        print(f"[Worker] Reminder: Task {task.title} is due soon!")
 
 
 class Category(db.Model):
@@ -46,8 +42,8 @@ class Category(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)
-    color = db.Column(db.String(7))
-    tasks = db.relationship('TaskModel', back_populates='tasks', lazy='dynamic')
+    color = db.Column(db.String(7), nullable=True)
+    tasks = db.relationship("Task", back_populates="category", lazy="select")
 
     
     def to_dict(self):

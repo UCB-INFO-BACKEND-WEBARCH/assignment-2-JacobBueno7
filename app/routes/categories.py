@@ -1,56 +1,95 @@
-from flask import Flask, request, jsonify
-from datetime import datetime
+from flask import jsonify, request
+from marshmallow import ValidationError
+from sqlalchemy.exc import IntegrityError
 
-from app import app, task_queue
-from app.models import db, Category
-from schemas import CategorySchema, CategoryResponseSchema
+from app import app, db
+from app.models import Category
+from app.schemas import CategorySchema
 
-app.post('/categories')
+
+@app.post("/categories")
 def create_category():
-    data = request.get_json()
-
-    schema = CategorySchema()
+    payload = request.get_json(silent=True) or {}
 
     try:
-        data = schema.load(data)
-    except Exception as err:
-        return jsonify({"errors": str(err)}), 400
-    
-    category = Category(
-        name=data["name"],
-        color=data["color"]
+        data = CategorySchema().load(payload)
+    except ValidationError as err:
+        return jsonify({"errors": err.messages}), 400
+
+    category = Category(name=data["name"], color=data.get("color"))
+    db.session.add(category)
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"errors": {"name": ["Category name must be unique."]}}), 400
+
+    return jsonify({"category": {"id": category.id, "name": category.name, "color": category.color}}), 201
+
+
+@app.get("/categories")
+def list_categories():
+    categories = Category.query.order_by(Category.id.asc()).limit(100).all()
+
+    result = []
+    for category in categories:
+        result.append(
+            {
+                "id": category.id,
+                "name": category.name,
+                "color": category.color,
+                "task_count": len(category.tasks),
+            }
+        )
+
+    return jsonify({"categories": result}), 200
+
+
+@app.get("/categories/<int:category_id>")
+def get_category(category_id):
+    category = Category.query.get(category_id)
+    if not category:
+        return jsonify({"error": "Category not found"}), 404
+
+    tasks = [
+        {
+            "id": task.id,
+            "title": task.title,
+            "completed": task.completed,
+        }
+        for task in category.tasks
+    ]
+
+    return (
+        jsonify(
+            {
+                "id": category.id,
+                "name": category.name,
+                "color": category.color,
+                "tasks": tasks,
+            }
+        ),
+        200,
     )
 
-    db.session.add(category)
-    db.session.commit()
 
-    response_schema = CategoryResponseSchema()
-    return jsonify(response_schema.dump(category)), 201
-
-app.get('/categories')
-def list_categories():
-    query = Category.query
-
-    categories = query.limit(100).all() # not sure how to aggregate the tasks as an attribute
-
-    response_schema = CategoryResponseSchema(many=True)
-    return jsonify(response_schema.dump(categories)), 200
-
-@app.get('/categories/<int:category_id>')
-def get_category(category_id):
-    category = Category.query.get_or_404(category_id)
-    schema = CategoryResponseSchema()
-    return jsonify(schema.dump(category)), 200
-
-@app.delete('/categories/<int:category_id>')
+@app.delete("/categories/<int:category_id>")
 def delete_category(category_id):
-    category = Category.query.get_or_404(category_id)
+    category = Category.query.get(category_id)
+    if not category:
+        return jsonify({"error": "Category not found"}), 404
+
+    if len(category.tasks) > 0:
+        return (
+            jsonify(
+                {
+                    "error": "Cannot delete category with existing tasks. Move or delete tasks first."
+                }
+            ),
+            400,
+        )
 
     db.session.delete(category)
     db.session.commit()
-
-    if len(category.tasks) > 0:
-        return jsonify({"error": "Cannot delete category with existing tasks. Move or delete tasks first."}), 400
-        
-
     return jsonify({"message": "Category deleted"}), 200

@@ -1,28 +1,55 @@
+import os
+
 from flask import Flask
+from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from redis import Redis
 from rq import Queue
-import os
-from flask_migrate import Migrate
 
+db = SQLAlchemy()
+migrate = Migrate()
 redis_client = None
 task_queue = None
-
-
 app = Flask(__name__)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
-    'DATABASE_URL',
-    'postgresql://postgres:postgres@postgres:5432'
-)
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db = SQLAlchemy(app)
-migrate = Migrate(app, db)
+def _configure_app() -> None:
+    app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
+        "DATABASE_URL", "sqlite:///app.db"
+    )
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-redis_url = os.getenv('REDIS_URL', 'redis://redis:6379/0')
-redis_client = Redis.from_url(redis_url)
-task_queue = Queue(connection=redis_client)
+    db.init_app(app)
+    migrate.init_app(app, db)
+
+    global redis_client, task_queue
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    redis_client = Redis.from_url(redis_url)
+    task_queue = Queue(connection=redis_client)
+
+
+_configure_app()
 
 with app.app_context():
-    db.create_all()
+    from app.models import Category, Task
+
+
+@app.get("/")
+def index():
+    return {
+        "message": "Task Manager API is running",
+        "endpoints": ["/tasks", "/categories", "/health"],
+    }, 200
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}, 200
+
+
+
+from app.routes import categories, tasks  
+
+
+def create_app() -> Flask:
+    return app
